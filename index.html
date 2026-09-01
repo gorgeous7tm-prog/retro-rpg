@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Retro RPG</title>
+    <style>
+        body {
+            background-color: #222;
+            color: #fff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            font-family: "Courier New", Courier, monospace, sans-serif;
+        }
+        canvas {
+            background-color: #000;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="640" height="480"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        const TILE_SIZE = 32;
+        const MAP_COLS = 20;
+        const MAP_ROWS = 15;
+
+        // Audio Context
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+
+        function playSound(type) {
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            if (type === 'encounter') {
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.2);
+                gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.2);
+            } else if (type === 'attack') {
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(200, audioCtx.currentTime);
+                osc.frequency.linearRampToValueAtTime(50, audioCtx.currentTime + 0.1);
+                gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.1);
+            } else if (type === 'hit') {
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(100, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(40, audioCtx.currentTime + 0.1);
+                gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.1);
+            } else if (type === 'victory') {
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(440, audioCtx.currentTime);
+                osc.frequency.setValueAtTime(554, audioCtx.currentTime + 0.1);
+                osc.frequency.setValueAtTime(659, audioCtx.currentTime + 0.2);
+                osc.frequency.setValueAtTime(880, audioCtx.currentTime + 0.3);
+                gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.01, audioCtx.currentTime + 0.6);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.6);
+            } else if (type === 'flee') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(400, audioCtx.currentTime);
+                osc.frequency.linearRampToValueAtTime(200, audioCtx.currentTime + 0.2);
+                gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.2);
+            }
+        }
+
+        // States: 'map', 'dialog', 'battle'
+        let gameState = 'map';
+        let dialogText = '';
+
+        // Simple Map (0: Grass, 1: Wall, 2: NPC)
+        const mapData = [
+            [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+            [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+            [1,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+            [1,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+            [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+            [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+            [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+            [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+            [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+            [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+            [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+            [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+            [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+            [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+            [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+        ];
+
+        let player = {
+            x: 2,
+            y: 2,
+            hp: 100,
+            maxHp: 100,
+            level: 1,
+            exp: 0,
+            attack: 10,
+            defense: 5,
+            dirX: 0,
+            dirY: 1 // Facing down by default
+        };
+
+        let enemy = null;
+        let battleState = 'menu'; // menu, message
+        let battleMessage = '';
+        let battlePhase = 'init'; // init, playerTurn, enemyTurn, end
+        let battleMenuCursor = 0;
+        let battleMenuOptions = ['こうげき', 'スキル', 'アイテム', 'ぼうぎょ', 'にげる'];
+        let playerDefending = false;
+
+        function startBattle() {
+            playSound('encounter');
+            gameState = 'battle';
+            battleState = 'message';
+            battlePhase = 'init';
+            battleMessage = "野生の魔物が現れた！";
+            enemy = {
+                name: "スライム",
+                hp: 30 + (player.level * 5),
+                maxHp: 30 + (player.level * 5),
+                attack: 5 + player.level,
+                defense: 2 + player.level,
+                exp: 20 * player.level
+            };
+            battleMenuCursor = 0;
+        }
+
+        let npc = {
+            x: 5,
+            y: 5,
+            message: "こんにちは！あざの力に気をつけて！"
+        };
+
+        // Add NPC to mapData to handle collision
+        mapData[npc.y][npc.x] = 2;
+
+        const keys = {
+            ArrowUp: false,
+            ArrowDown: false,
+            ArrowLeft: false,
+            ArrowRight: false,
+            z: false,
+            x: false
+        };
+
+        // Also keep track of key presses that just happened
+        const keyJustPressed = {
+            z: false,
+            x: false,
+            ArrowUp: false,
+            ArrowDown: false,
+            ArrowLeft: false,
+            ArrowRight: false
+        };
+
+        document.addEventListener('keydown', (e) => {
+            if (keys.hasOwnProperty(e.key)) {
+                if (!keys[e.key]) {
+                    keyJustPressed[e.key] = true;
+                }
+                keys[e.key] = true;
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (keys.hasOwnProperty(e.key)) {
+                keys[e.key] = false;
+            }
+        });
+
+        function isWalkable(x, y) {
+            if (x < 0 || x >= MAP_COLS || y < 0 || y >= MAP_ROWS) return false;
+            return mapData[y][x] === 0; // Only grass is walkable
+        }
+
+        function checkAction() {
+            if (keyJustPressed.z) {
+                // Check if facing NPC
+                let targetX = player.x + player.dirX;
+                let targetY = player.y + player.dirY;
+
+                if (targetX === npc.x && targetY === npc.y) {
+                    gameState = 'dialog';
+                    dialogText = npc.message;
+                }
+            }
+        }
+
+        let moveTimer = 0;
+        const MOVE_DELAY = 10;
+
+        function updateMap() {
+            checkAction();
+            keyJustPressed.z = false; // Reset just pressed
+
+            if (moveTimer > 0) {
+                moveTimer--;
+                return;
+            }
+
+            let dx = 0;
+            let dy = 0;
+            if (keys.ArrowUp) dy = -1;
+            else if (keys.ArrowDown) dy = 1;
+            else if (keys.ArrowLeft) dx = -1;
+            else if (keys.ArrowRight) dx = 1;
+
+            if (dx !== 0 || dy !== 0) {
+                player.dirX = dx;
+                player.dirY = dy;
+                let nextX = player.x + dx;
+                let nextY = player.y + dy;
+                if (isWalkable(nextX, nextY)) {
+                    player.x = nextX;
+                    player.y = nextY;
+                    moveTimer = MOVE_DELAY;
+
+                    // Random encounter (10% chance per step on grass)
+                    if (Math.random() < 0.1) {
+                        startBattle();
+                    }
+                } else {
+                    // Turn but don't move
+                    moveTimer = MOVE_DELAY;
+                }
+            }
+        }
+
+        function drawPlayer(x, y) {
+            const px = x * TILE_SIZE;
+            const py = y * TILE_SIZE;
+
+            // Draw body (Red shirt)
+            ctx.fillStyle = '#f00';
+            ctx.fillRect(px + 4, py + 12, 24, 16);
+
+            // Draw head (Skin color)
+            ctx.fillStyle = '#ffccaa';
+            ctx.fillRect(px + 8, py + 4, 16, 12);
+
+            // Left arm (left side of character, so right side from screen view? Let's say right side of screen is left arm for facing forward, or just specify it clearly)
+            // Let's assume character is facing camera, so character's left arm is on the right side of the sprite.
+            // Wait, standard is left arm is on the right side of drawing if facing you.
+            ctx.fillStyle = '#ffccaa';
+            ctx.fillRect(px + 24, py + 12, 6, 12);
+            // Birthmark (あざ) on left arm (purple/dark red)
+            ctx.fillStyle = '#800080';
+            ctx.fillRect(px + 25, py + 15, 4, 4);
+
+            // Right arm (character's right arm, left on screen)
+            ctx.fillStyle = '#ffccaa';
+            ctx.fillRect(px + 2, py + 12, 6, 12);
+
+            // Legs (Blue pants)
+            ctx.fillStyle = '#00f';
+            ctx.fillRect(px + 6, py + 28, 8, 4);
+            ctx.fillRect(px + 18, py + 28, 8, 4);
+        }
+
+        function drawNPC(x, y) {
+            const px = x * TILE_SIZE;
+            const py = y * TILE_SIZE;
+            // Green shirt for NPC
+            ctx.fillStyle = '#0a0';
+            ctx.fillRect(px + 4, py + 12, 24, 16);
+            // Head
+            ctx.fillStyle = '#ffccaa';
+            ctx.fillRect(px + 8, py + 4, 16, 12);
+        }
+
+        function drawMap() {
+            for (let y = 0; y < MAP_ROWS; y++) {
+                for (let x = 0; x < MAP_COLS; x++) {
+                    if (mapData[y][x] === 1) {
+                        ctx.fillStyle = '#555'; // Wall
+                    } else {
+                        ctx.fillStyle = '#2d2'; // Grass
+                    }
+                    ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                }
+            }
+
+            drawNPC(npc.x, npc.y);
+            drawPlayer(player.x, player.y);
+        }
+
+        function drawDialog() {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(20, canvas.height - 100, canvas.width - 40, 80);
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(20, canvas.height - 100, canvas.width - 40, 80);
+
+            ctx.fillStyle = '#fff';
+            ctx.font = '20px monospace';
+            ctx.fillText(dialogText, 40, canvas.height - 50);
+
+            ctx.font = '14px monospace';
+            ctx.fillText("Press Z to continue", canvas.width - 200, canvas.height - 30);
+        }
+
+        function updateDialog() {
+            if (keyJustPressed.z) {
+                gameState = 'map';
+                // Small delay to prevent immediate re-triggering
+                moveTimer = 10;
+            }
+            keyJustPressed.z = false;
+        }
+
+        function drawBattle() {
+            // Background
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Enemy representation
+            ctx.fillStyle = '#0ff'; // Cyan color for slime
+            ctx.fillRect(canvas.width / 2 - 40, canvas.height / 2 - 80, 80, 80);
+
+            // Enemy Stats
+            ctx.fillStyle = '#fff';
+            ctx.font = '20px monospace';
+            if (enemy) {
+                ctx.fillText(`${enemy.name} HP: ${enemy.hp}/${enemy.maxHp}`, 40, 40);
+            }
+
+            // Player Stats
+            ctx.fillText(`LV: ${player.level} HP: ${player.hp}/${player.maxHp}`, 40, canvas.height - 120);
+
+            // Message Window
+            ctx.fillStyle = '#111';
+            ctx.fillRect(20, canvas.height - 100, canvas.width - 40, 80);
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(20, canvas.height - 100, canvas.width - 40, 80);
+
+            if (battleState === 'message') {
+                ctx.fillStyle = '#fff';
+                ctx.font = '20px monospace';
+                ctx.fillText(battleMessage, 40, canvas.height - 50);
+                ctx.font = '14px monospace';
+                ctx.fillText("Press Z to continue", canvas.width - 200, canvas.height - 30);
+            } else if (battleState === 'menu') {
+                ctx.fillStyle = '#fff';
+                ctx.font = '20px monospace';
+                for (let i = 0; i < battleMenuOptions.length; i++) {
+                    let col = i % 3;
+                    let row = Math.floor(i / 3);
+                    let x = 40 + col * 150;
+                    let y = canvas.height - 70 + row * 30;
+                    if (i === battleMenuCursor) {
+                        ctx.fillText('>', x - 20, y);
+                    }
+                    ctx.fillText(battleMenuOptions[i], x, y);
+                }
+            }
+        }
+
+        function enemyTurn() {
+            let dmg = Math.max(1, enemy.attack - (playerDefending ? player.defense * 2 : player.defense));
+            player.hp -= dmg;
+            if (player.hp < 0) player.hp = 0;
+            playSound('hit');
+            battleMessage = `${enemy.name}の攻撃！ ${dmg}のダメージ！`;
+            battleState = 'message';
+            battlePhase = 'enemyTurn';
+            playerDefending = false; // Reset defense after turn
+        }
+
+        function updateBattle() {
+            if (battleState === 'message') {
+                if (keyJustPressed.z) {
+                    keyJustPressed.z = false;
+
+                    if (battlePhase === 'end') {
+                         gameState = 'map';
+                         moveTimer = 10;
+                         return;
+                    }
+
+                    if (player.hp <= 0 && battlePhase !== 'gameOver') {
+                        battleMessage = "あなたは倒れた...";
+                        battlePhase = 'gameOver';
+                        return;
+                    } else if (battlePhase === 'gameOver') {
+                         // Simplified Game Over -> Back to Map with 1 HP
+                         player.hp = 1;
+                         gameState = 'map';
+                         moveTimer = 10;
+                         return;
+                    }
+
+                    if (enemy && enemy.hp <= 0 && battlePhase !== 'victory') {
+                        // Level up logic (急成長)
+                        playSound('victory');
+                        player.exp += enemy.exp;
+                        let expNeeded = player.level * 50;
+
+                        if (player.exp >= expNeeded) {
+                            player.level++;
+                            player.exp -= expNeeded;
+                            // Rapid growth from the birthmark power
+                            player.maxHp += 20;
+                            player.hp = player.maxHp;
+                            player.attack += 10;
+                            player.defense += 5;
+                            battleMessage = `レベルアップ！あざの力が目覚めた！ LV${player.level}になった！`;
+                        } else {
+                            battleMessage = `${enemy.name}を倒した！ ${enemy.exp} EXP獲得！`;
+                        }
+                        battlePhase = 'victory';
+                        return;
+                    } else if (battlePhase === 'victory') {
+                         gameState = 'map';
+                         moveTimer = 10;
+                         return;
+                    }
+
+                    if (battlePhase === 'init') {
+                        battleState = 'menu';
+                        battlePhase = 'playerTurn';
+                    } else if (battlePhase === 'playerTurn') {
+                        // Player action finished, now enemy turn
+                        if (battleMessage === '逃げ出した！') {
+                            playSound('flee');
+                            gameState = 'map';
+                            moveTimer = 10;
+                        } else {
+                            enemyTurn();
+                        }
+                    } else if (battlePhase === 'enemyTurn') {
+                        battleState = 'menu';
+                        battlePhase = 'playerTurn';
+                    }
+                }
+            } else if (battleState === 'menu') {
+                if (keyJustPressed.ArrowRight) {
+                    battleMenuCursor = (battleMenuCursor + 1) % battleMenuOptions.length;
+                    keyJustPressed.ArrowRight = false;
+                } else if (keyJustPressed.ArrowLeft) {
+                    battleMenuCursor = (battleMenuCursor - 1 + battleMenuOptions.length) % battleMenuOptions.length;
+                    keyJustPressed.ArrowLeft = false;
+                } else if (keyJustPressed.ArrowDown) {
+                    battleMenuCursor = (battleMenuCursor + 3) % battleMenuOptions.length;
+                    keyJustPressed.ArrowDown = false;
+                } else if (keyJustPressed.ArrowUp) {
+                    battleMenuCursor = (battleMenuCursor - 3 + battleMenuOptions.length) % battleMenuOptions.length;
+                    keyJustPressed.ArrowUp = false;
+                } else if (keyJustPressed.z) {
+                    keyJustPressed.z = false;
+                    let action = battleMenuOptions[battleMenuCursor];
+                    if (action === 'こうげき') {
+                        let dmg = Math.max(1, player.attack - enemy.defense);
+                        enemy.hp -= dmg;
+                        playSound('attack');
+                        battleMessage = `プレイヤーの攻撃！ ${dmg}のダメージ！`;
+                        battleState = 'message';
+                    } else if (action === 'スキル') {
+                        let dmg = Math.max(1, (player.attack * 2) - enemy.defense);
+                        enemy.hp -= dmg;
+                        playSound('attack');
+                        battleMessage = `あざの力を解放した！ ${dmg}のダメージ！`;
+                        battleState = 'message';
+                    } else if (action === 'アイテム') {
+                        player.hp = Math.min(player.maxHp, player.hp + 30);
+                        battleMessage = `薬草を使った！ HPが回復した！`;
+                        battleState = 'message';
+                    } else if (action === 'ぼうぎょ') {
+                        playerDefending = true;
+                        battleMessage = `プレイヤーは防御の体勢をとった。`;
+                        battleState = 'message';
+                    } else if (action === 'にげる') {
+                        battleMessage = `逃げ出した！`;
+                        battleState = 'message';
+                    }
+                }
+            }
+        }
+
+        function gameLoop() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (gameState === 'map') {
+                updateMap();
+                drawMap();
+            } else if (gameState === 'dialog') {
+                updateDialog();
+                drawMap();
+                drawDialog();
+            } else if (gameState === 'battle') {
+                updateBattle();
+                drawBattle();
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        gameLoop();
+    </script>
+</body>
+</html>
