@@ -1,0 +1,1268 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>第1章: 鈍色の光と覚醒の予兆</title>
+    <style>
+        body {
+            background-color: #1a1a24; /* 鈍色 (Dull blue-grey) */
+            color: #fff;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            font-family: "Courier New", Courier, monospace, "MS Gothic", "Osaka", sans-serif;
+        }
+        canvas {
+            image-rendering: pixelated;
+            border: 2px solid #555;
+            box-shadow: 0 0 20px #222;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="640" height="480"></canvas>
+    <script>
+        // --- Input Handling ---
+        const keys = {
+            up: false, down: false, left: false, right: false,
+            z: false, x: false, enter: false, escape: false,
+            justPressed: {}
+        };
+        const keyMap = {
+            'ArrowUp': 'up', 'w': 'up', 'W': 'up',
+            'ArrowDown': 'down', 's': 'down', 'S': 'down',
+            'ArrowLeft': 'left', 'a': 'left', 'A': 'left',
+            'ArrowRight': 'right', 'd': 'right', 'D': 'right',
+            'z': 'z', 'Z': 'z', 'Enter': 'enter',
+            'x': 'x', 'X': 'x', 'Escape': 'escape'
+        };
+
+        window.addEventListener('keydown', (e) => {
+            const key = keyMap[e.key];
+            if (key && !keys[key]) {
+                keys[key] = true;
+                keys.justPressed[key] = true;
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            const key = keyMap[e.key];
+            if (key) {
+                keys[key] = false;
+            }
+        });
+
+        function clearJustPressed() {
+            for (let k in keys.justPressed) {
+                keys.justPressed[k] = false;
+            }
+        }
+
+        // --- Audio System (Web Audio API) ---
+        let audioCtx = null;
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+
+        let bgmOscillators = [];
+        let currentBGM = null;
+        let nextNoteTime = 0;
+        let bgmBeatIndex = 0;
+        let bgmInterval = null;
+
+        const bgmTracks = {
+            map: {
+                tempo: 120,
+                melody:  [261.63, 293.66, 329.63, 392.00, 329.63, 293.66, 261.63, 196.00], // C4, D4, E4, G4, E4, D4, C4, G3
+                bass:    [130.81, 130.81, 146.83, 146.83, 164.81, 164.81, 196.00, 196.00], // C3, C3, D3, D3, E3, E3, G3, G3
+                arpeggio:[523.25, 659.25, 783.99, 659.25, 523.25, 659.25, 783.99, 659.25]  // C5, E5, G5, E5
+            },
+            battle: {
+                tempo: 160,
+                melody:  [440.00, 493.88, 523.25, 493.88, 440.00, 493.88, 523.25, 587.33], // A4, B4, C5, B4...
+                bass:    [110.00, 110.00, 123.47, 123.47, 130.81, 130.81, 146.83, 146.83], // A2, B2...
+                arpeggio:[880.00, 987.77, 1046.5, 987.77, 880.00, 987.77, 1046.5, 1174.66]
+            }
+        };
+
+        function playBGM(trackName) {
+            if (currentBGM === bgmTracks[trackName]) return;
+            if (!audioCtx) initAudio();
+            if (!bgmTracks[trackName]) { stopBGM(); return; }
+
+            currentBGM = bgmTracks[trackName];
+            bgmBeatIndex = 0;
+            nextNoteTime = audioCtx.currentTime + 0.1;
+
+            // scheduling loop
+            if (bgmInterval) clearInterval(bgmInterval);
+            bgmInterval = setInterval(scheduleBGM, 50);
+        }
+
+        function stopBGM() {
+            if (bgmInterval) clearInterval(bgmInterval);
+            bgmInterval = null;
+            currentBGM = null;
+            // Oscillators are ephemeral in Web Audio, we don't strictly need to track and stop them if we just stop scheduling
+        }
+
+        function scheduleBGM() {
+            if (!currentBGM || !audioCtx) return;
+            const beatDuration = 60 / currentBGM.tempo;
+            while (nextNoteTime < audioCtx.currentTime + 0.1) {
+                playNote(currentBGM.melody[bgmBeatIndex % currentBGM.melody.length], nextNoteTime, beatDuration * 0.8, 'square', 0.1);
+                playNote(currentBGM.bass[bgmBeatIndex % currentBGM.bass.length], nextNoteTime, beatDuration * 0.9, 'sawtooth', 0.1);
+                playNote(currentBGM.arpeggio[(bgmBeatIndex * 2) % currentBGM.arpeggio.length], nextNoteTime, beatDuration * 0.4, 'sine', 0.05);
+                playNote(currentBGM.arpeggio[(bgmBeatIndex * 2 + 1) % currentBGM.arpeggio.length], nextNoteTime + beatDuration * 0.5, beatDuration * 0.4, 'sine', 0.05);
+
+                nextNoteTime += beatDuration;
+                bgmBeatIndex++;
+            }
+        }
+
+        function playNote(freq, time, duration, type, vol) {
+            if (!freq) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = type;
+            osc.frequency.value = freq;
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            gain.gain.setValueAtTime(vol, time);
+            gain.gain.exponentialRampToValueAtTime(0.001, time + duration);
+
+            osc.start(time);
+            osc.stop(time + duration);
+        }
+
+        function playSound(type) {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            const now = audioCtx.currentTime;
+
+            switch (type) {
+
+                case 'popopo':
+                    osc.type = 'square';
+                    osc.frequency.setValueAtTime(600, now);
+                    osc.frequency.linearRampToValueAtTime(500, now + 0.05);
+                    gain.gain.setValueAtTime(0.05, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.05);
+                    osc.start(now);
+                    osc.stop(now + 0.05);
+                    break;
+
+                case 'cursor':
+                    osc.type = 'square';
+                    osc.frequency.setValueAtTime(440, now);
+                    osc.frequency.exponentialRampToValueAtTime(880, now + 0.1);
+                    gain.gain.setValueAtTime(0.1, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+                    osc.start(now);
+                    osc.stop(now + 0.1);
+                    break;
+                case 'confirm':
+                    osc.type = 'square';
+                    osc.frequency.setValueAtTime(880, now);
+                    osc.frequency.setValueAtTime(1760, now + 0.1);
+                    gain.gain.setValueAtTime(0.1, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+                    osc.start(now);
+                    osc.stop(now + 0.2);
+                    break;
+                case 'cancel':
+                    osc.type = 'square';
+                    osc.frequency.setValueAtTime(440, now);
+                    osc.frequency.exponentialRampToValueAtTime(220, now + 0.2);
+                    gain.gain.setValueAtTime(0.1, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+                    osc.start(now);
+                    osc.stop(now + 0.2);
+                    break;
+                case 'hit':
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(100, now);
+                    osc.frequency.exponentialRampToValueAtTime(10, now + 0.2);
+                    gain.gain.setValueAtTime(0.2, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+                    osc.start(now);
+                    osc.stop(now + 0.2);
+                    break;
+                case 'magic':
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(800, now);
+                    osc.frequency.linearRampToValueAtTime(1200, now + 0.2);
+                    osc.frequency.linearRampToValueAtTime(400, now + 0.5);
+                    gain.gain.setValueAtTime(0.1, now);
+                    gain.gain.linearRampToValueAtTime(0.1, now + 0.3);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+                    osc.start(now);
+                    osc.stop(now + 0.5);
+                    break;
+                case 'fanfare':
+                    osc.type = 'square';
+                    // Simple arpeggio
+                    osc.frequency.setValueAtTime(440, now);
+                    osc.frequency.setValueAtTime(554.37, now + 0.15);
+                    osc.frequency.setValueAtTime(659.25, now + 0.3);
+                    osc.frequency.setValueAtTime(880, now + 0.45);
+                    gain.gain.setValueAtTime(0.1, now);
+                    gain.gain.setValueAtTime(0.1, now + 0.6);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 1.0);
+                    osc.start(now);
+                    osc.stop(now + 1.0);
+                    break;
+            }
+        }
+
+        // --- Save/Load System (localStorage) ---
+        const SAVE_KEY = 'retro_rpg_save';
+        function saveGame(data) {
+            try {
+                localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+                return true;
+            } catch (e) {
+                console.error("Failed to save game", e);
+                return false;
+            }
+        }
+
+        function loadGame() {
+            try {
+                const data = localStorage.getItem(SAVE_KEY);
+                if (data) {
+                    return JSON.parse(data);
+                }
+            } catch (e) {
+                console.error("Failed to load game", e);
+            }
+            return null;
+        }
+
+
+        function drawWindow(ctx, x, y, w, h) {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+            ctx.fillRect(x, y, w, h);
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#fff';
+            ctx.strokeRect(x + 2, y + 2, w - 4, h - 4);
+            ctx.strokeRect(x + 6, y + 6, w - 12, h - 12);
+            ctx.lineWidth = 1;
+        }
+
+        // --- Procedural Graphics (Pixel Art) ---
+        function drawPixelSprite(ctx, spriteArray, x, y, size, colors) {
+            for (let i = 0; i < spriteArray.length; i++) {
+                for (let j = 0; j < spriteArray[i].length; j++) {
+                    const colorIndex = spriteArray[i][j];
+                    if (colorIndex > 0) {
+                        ctx.fillStyle = colors[colorIndex - 1];
+                        ctx.fillRect(x + j * size, y + i * size, size, size);
+                    }
+                }
+            }
+        }
+
+        // --- Map & Interaction System ---
+
+
+        // --- High Quality Assets (Base64) ---
+        const imageAssets = {
+            grass: new Image(),
+            path: new Image(),
+            tree: new Image(),
+            brick: new Image(),
+            water: new Image(),
+            player: new Image(),
+            monster: new Image(),
+            battle_bg: new Image()
+        };
+
+        imageAssets.grass.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAADh0lEQVR4nI1WS2+jSBD+aMzDxoA7ba1Wk8NKXHKZy85lf+T8vL1MtJI1t0hrEzAOBBwIeyinUu5ORlsH3OB611fV5RXfiyRJ2rYFkGVZ0zR4oyiKhmEA0Pd9HMf4H3Q+n8MwJNn9fp/nudJak3YAUjsA0g6AtL+8vFjquq6Tr23bknaSzbJsnmc1jiNZZq8tLVVVPT8/AwiCwPprtVpRfHROksQYY/Eo+pGWD4eDlNdaL5fLD7Mh4yvLkp6n0+nKgPUOYLvd0uHh4YE/hmFocZJPlFWlFDuRpunr66sdgUvzPOd5zq/jOKZp6rJlWQaANe7ud2TvyoCbdwCe58VxzDmVTrFJAL7vf+Yi2VYQaAFwPp83mw2d+76nzHqeB5E6osViAaCqKksvBcGQs1MUhmFd19M0yY/zPAPg4rtu3tzc8JfirgAQBMGlPB9G5wa+2WxcCDI9Pj6ydoqAaBgGhTeEHY/Hz+QB1HVNbBa53UcREOV5rgAYY3b3O8IMF+AXJBs+CAKqkPRamleWX3VdWwcmjp3y/vT0RK9UIQBa6/V6zRMMwDRNijBr5Q7XuJROMa3XazokSUKHqqrIqsS90lrTiXJH3uEaGCTgOkFRtm1rFVbyvBcZQN/3nF9OkexnWUB8UrAoiqTIpcgApmmSQ//29pYQst/vXS0WWcFJQL73gYX9tm1pPvOgdUkCRAZnjGFoKZa38kscXEnubTkwjDGHw0FOi7Is53mm58WAUoqFq6ri2hIHY5HiS9PUGhhN2TBMAKxWK8/zfN/n0av6vvd9f3e/K+6K6t+Km96l4/HoXh4WLZfLKIqmaWLOq1n09c+vH45uAMMwSGwwudi1YSobreu6YRi6rrNkjDGfGW6aprgr6DqzdoCLAfcmoatYUlmWLhtRlmVxHNNWwIJy2n88rvVvene/k3H8/Ofn+7+iqgD6vrduU9/3eQVReLtCKUsEG631lz++4Bq7YRgS8KuqIo3cOm7x32+0LMs4/G9/fWPgW6tccVf8+PvH8XCUGqdpskpKr9LeZfEiska0+d3IILhXqTdpiEZRZG2bEO3ZNI1XfL+aXwAWi8U4jm3bkgqttexV6hge+mVZ/uIqhSwyZ41iSpKEsGHtDRQHr3WW9nmereXjYiDPcwsbAKyNkeyxIndhAbDdbnmW0F6jAJxOJ3cMuDsA26OD1lprbV0JBDNyhTLxH7mRB+PoKWk9AAAAAElFTkSuQmCC';
+        imageAssets.path.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAADhUlEQVR4nI1WwWrbQBAdbVay5ChSyJeUmqJDwYeoFIogJaZxq0Cv/YH0L9LfaHQpDjgoNxsaAsUHHwv5CR+kOJIlS3YP40w2K1npO5iVrH0zO/NmZpXzsxMAsCyrLMuHhweoIIqi69s7XPueg4s4jjnnlmUVRVHdAgBBOMEFpw1RFJmmubOzI316fXvX6XRoG9qwLAsAZrOZbdtFUXD+xLO/v//z6s/x8TG+YbgtCCfXt3dV9iCcEDsAdDoddG25XAKAbdsAwBijN4qirFYrkYEH4eT09BQfLi4upFBsg6qqtEYD+KbVagFA792rweXlsxAhe6/X2zg+GDTYKMuSztput5Mkob80TUMbtJ01uJnnue850+mU3kynU99zkB2JkiQxTZM+0HU9yzKRhPueQ5GRoGka+kKS+PblXVEUaZoCABHN53PaslgsJBJeliUeh1hEA3mei+e9v7/H3729PQBQVRVzS5boNKqqMsayLOMUzU/vX/8aDHDtum4QjsQ0rNdrRVHgUaAIkR0AxFgtl0vTNLMse8oBysB1Xdd1H208KRLZASCOY5FUqk3RBoauKcmi4W3Y3d0FANK+mA/EywYk4LGiKHrGwjY81c7xzIDvOaPRCNej0cj3HMn9IJx0u90gnGANV4E9AyWAUM7PThRFWa/Xko/VQkN2XN/c3Eja21aYHACIHfXne45t2xgEUXlVBOHk6Ohosx4OJRuGYaRpumkVqGg6GoX46vffbewvAuuRo4+ioql8RAcRw+Gw2+1SfGphWZYoZVaNgFQ+EprZASCOY7EYFZxo2yD1j9rM019FURwcHEiVqPz43hclJAKz1GAeAFarFRWBKL8oijbjyDAMrMYqsJs2Q2Tv9/v9fj8IJ4wxKhSWJEntrAdBS1LdViHVnTg1WbV71O4XT5kkiWEY9FgURYMHmyRzzmsvIHSNIGDf1nW9OltqW4DcpOgCghsODw9FIc3nc+zbVXYA+PrxbVVmcjdFS4vFAtkBQLTR0DY0TauNAaNJQrBtW9f1bUSIqrLLssTrhXQvYtKnrVZrW9pFsZFbOKXRQFmW8ChcuhLIIZrNZvid7znj8RgAxuPx5w9v4HF4IeguJLZ+XGOfwEsNALCGwY02fM9hjIlC5Jy3223xUWSgVoFSZs0jl1QhpgqTiYfAy2/t3jRN8zz/35ksNkgEHgJPRk1FclfTtH/Vf+BpZmM8pwAAAABJRU5ErkJggg==';
+        imageAssets.tree.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAABN0lEQVR4nOWVvRHCMAyFHxwtFSxAKnZgnbADI7ADDMES7ECVLAAVA0CDc4kl6ye2K95d7oId9D5J/gH+XYtikU74kLGzHj8fgDN2gNgBWsZoO/3ZbJrhvXt1JggdgDOOzMfGsSYgDMQy19wlpl1pgJR5JCl7yzwPIJmH7B+/x6uoCit3gDmmgmgFpOyfdKi7d3RwPB/vBhXAYV5CthYo5qEKzaEhY9iXADBKawcAchboLcgtvbJoKcC14AUVy30SVjYHpLsgbMcSq/+W9klXoGYrTAABYu7FEyRkrwMEiIqyLUIli5z/2XeBF8L4vW8bWiEcsJ6juAWA43sHALise/LBMIe+/Q1dcwBaYW4wUxTHIECpFojmGSJxOYBa5mx8DkDtW6Ym8aXVWqMSJDnP3p4DVLua+foC+YxG6LUTmOYAAAAASUVORK5CYII=';
+        imageAssets.brick.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAgElEQVR4nGNMYaAtYGFgYEgJCCBSdceGDSIkqmdhYGB4dekSSY4iST0TSUaTAUYtIAgYUxgY3pCiQYRE9SwQPSQBktQznsCWqMlI77jUs+BJ1FTJH0M/FQ19CxgDcEiQmt5xqWfBk6ipkj9G64NRCygHo/UBQfWj9cEIsIDm9QEA/KM+sHIRJEwAAAAASUVORK5CYII=';
+        imageAssets.water.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAADVElEQVR4nI2WXXbaSBCFP0GQLLBAIIzHg01yHM7JJrKDWcDsYN7mOScr8FqyiTxlEzlDSGIHe4wRSMgggwPKA2qhn5bIfequLtXtrr5VaoV3H/kdfN7wplzk8MXgtQcw2rLp0JvszCWA1SZ0eq4yzPn+TZm5JV9y2wCGF067pSg68AJAE1urLLkE4HpLpcQZ+FWooLtc21gebovGc5rgeApc/fs2S/3+wyeFdx+5DzhVcnYew+SI9lORw8Cib6dsJSCMvsjLgMtTBZBEH3jYzwC+wd0mG50wRTvUJMvA1T9/ZY3vP3wC6BvhXPfQ5RJQfldFcYwsumI3D3BS5LtT0ZpRYXJT6MbOWhhdEGgq3SOAx/kBd8fJXfKriendnOVUEEQ4rmNvKIBpMkgG8l2++wD6km1lbz+rU23FCJZmOLCSdzVJhgP6y8RUb/BSD8elWIk8hJoUBFVHst9hm/YybXRmEs8sTuwYgbMStPWEU1fWN8wmgLc+QGD7zDVBYGqCNnnJWp3hz3DsxuzOFkM9QGDo1FekL3nk8ugkLJeiEhswtAFmT5jiq6m29/xS5ZvL11o4VeG/NrmFdq3QCw7scQdly8TCyr0YsZetaHbXKpCOfpu56ghBiZaXs/STsBdtGpRFjnuy2/szI1YArv6Wt+hwdGPRc0WKflicy5tdiAcrUl4RfqiYCseryCBSdG6zLPwl+ItCeiG28zXaOBw/z0ioqBoA3NSQolfYDU+E2G7mVBoAsxdUmqRlClwU7jSCp3MvU85FHeC7TjM8U4l7M+GxqhM4sUCPkijfZhg+p02Gzb1Rianj5W00LHHqAIxFDWtzFJOp6BmrbSL0YxnglYh7GTtEoDKK0ttkHAiCHTp1vsa6QUvwtZPd6Vg087kvOZk/A/BMgI6CbwmC0RQgCPBzOsxOF9NYQdV1iVtfBbgVatZtQdBtMZtwaaJnqmy8Zm3SAaBxIadPYfcA3L3G9ilqthNOvg1wX6WjojqhsezsHRY5agb+XwE04k/HHTzxP3IUdAvgdMnTNP2977E4oiZTs7IA+EOL22IEhvijmgHAwAY4anGXjKIb1DJFN/YBAsmxMoUWoS8eemeZpYGbtnRkd36AYB9OlEL0aOg3Dn+1ChP1C4bYB+UqWHK9AAAAAElFTkSuQmCC';
+        imageAssets.player.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAACACAYAAAD03Gy6AAADT0lEQVR4nO2dvXUTQRRGVxxKsAtBCSpCgSgD5xwiIvdg2nBARgMi2UZwDyIA2zrW/szf6jKz9yb2kXb2rv38RiNpPnnTJXDcbk9j9+36fpNyzrX6ow6eEudeyFr975aQpxy/Vn9QAVJ/mFK/hJb9swXI/SEcPz0+eAqSZXgfO2DX9y/fH7fb2dtL05o/eKVwOj6cuq7rNru789teTzRw+2Z3V2wl0qrfKQgmego6r3rI7aVpzW8HwAQXIHY+LTn/tuwPLsDNzcPpdh927O3+7/Gh516zP3oKmruI0ItMpTX/aJs8L7vGTv77x7R86P6YNl6LP3oVNCQjaMXvKggmuQNC2Hz8/PL96df3JVXV+qMK8PXDt4ij72NOvVq/UxDMolMQ0fa1+YOXZSlPbJ6eyj0bbdXvFAQT9ReyffP2Wn/2zv/UfaVo0W8HwFgAmNxV0KHERazZH1qAQ9d1Xd/3nyLOffj39TFizNy5UsZcxT/wuwnyh0xBs3LHp48PXSnkXMRjxtjm/SlLtUOuNJO1+6UkSU9WWtqfT/vNB8B+8wGw33wA7DcfAI/3tSAYCwCTtVFp9uQL7M9vzW8HwFgAGAsAYz4A9psPgP3mA2B/dAGG9r2nylNozV9ka2Ire/UJv6sgGAsAEzwFve6Nv78IHoztm//yM+vaVuG3A2AsAEx0PmAunnnOEvvzW/PbATDmA2C/HQBjAWDMB8B+8wGF/OYDKh1vPgD2mw+ozy8lMR8A+80HwH7zAbDffADsNx8Aj/e1IBgLAGM+APbbATAWAMYCwJgPgP3mA2C/+QDYn/QYMCWZ2j9fipb8yQ/Ct3t2X34rfldBMBYAJiEf8JbLz8l/PnaZ/flt+e0AGAsAk/3/A6b2y1/j8/tr99sBMOYDYL8dAGMBYMwHwH7zAYX85gMqHW8+APabD6jPLyUxHwD7zQfAfvMBsN98AOw3HwCP97UgGAsAYz4A9tsBMBYAxgLAmA+A/eYDYL/5ANg/2iZDy67zk899gOnQ/TFtvBZ/8pvyNX9m///kdxUEYwFgoqag8T3yQ1zum8+lRb8dAGMBYLLzAVNcY39+7X47AMZ8AOy3A2AsAIz5ANhvPqCQ33xApePNB8B+8wH1+aUkfwC56ww+Dn6/bwAAAABJRU5ErkJggg==';
+        imageAssets.monster.src = 'data:image/png;base64,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';
+        imageAssets.battle_bg.src = 'data:image/png;base64,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ASBAgAEgQIABIECAASBAgAEgQIABIECAASBAgAEgQIABIECAASBAgAEgQIABIECAASBAgAEgQIABIECAASBAgAEgQIABIECAASBAgAEgQIABIECAASBAgAEgQIABIECAASBAgAEgQIABIECAASBAgAEgQIABIECAASBAgAEg4Fd6ALBPH/87fv/BacUfOz7/J8tNGtjvz65jgFckwPCfq2ryr/ePx52esd0+/1lzLwL7IcDs1rNmXFPfEebf5ZzMv9klAWZj5meVzbva6Xd7bHrNhggwhdyaG7meMsOU6bVIU4QAM5QnWYl7fBDKM8MIMI1JLJsmzwwjwCzx/nHykiVe0IM8azNzCTCPeMUTTHSvzcLMPQLM4SC00I0wc48Av5ymn9AELHQzzKr8UgR4z7weCrZFlV+KAO+H3MIuXZ/akrwPArxJWguvzER5HwR4A+QWeMpEeXMEuCLFBdb7cSXR42oEOE9ugQGu3wHha6ayBDhAcYEKfnwAgB4PJsDd+dRGYBOuP5BHkrsS4PZ8qhSwD6bIXQlwGx5VBnbvssef/wQHshMCvJDiAq/MS6zXE+CpFBfgHj1eQIAfEV2ABS4vnmJ8jwB/o7gAbZkc3yPAogswjsnx2YsGWHQB4l48xi8U4IsX0KsvQC2XMf79GRzIODsPsM/EANicy0v3jj/9Y4cB/nMbJb0Am7fjGO8nwJ7WBdi3c4z3UeJtB1h0AV7QPqbF2wuw6AJwtt0YbybAugvAY9t6jLp6gHUXgLk2UeKKARZdAJqo/AB1oQDrLgD9VJsW5wOsuwCMVKTEsQDrLgBZ2RIPDbDoAlBQ5KniEQH2gcwAbMWwaXHHAOsuANvVu8RdAiy9AOzGV9SaZ7hlgHUXgL1qPiFuEGDdBeB1tCrx8gDrLgCv7E8Hj5//LAnikgBLLwCcfb3Jdm6GZwRYdwHgnvNnXUws8fMA6y4ATDexxI8CLL0AsNjjh6ZvBFh3AaCVexPibwGWXgDo5MeE+NdBdwFglPOE+E19AWC8t/QAAOAVCTAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAQIMAAECDAABAgwAAT8H+iEHOSuFwpGAAAAAElFTkSuQmCC';
+
+        const TILE_SIZE = 32;
+
+        const tileCache = {};
+
+
+
+        // 0: grass, 1: path, 2: wall/tree, 3: inn, 4: shop, 5: elder, 6: exit, 7: boss
+        const villageMap = [
+            [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+            [2,0,0,0,0,0,2,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            [2,0,3,0,0,0,2,0,0,0,5,0,0,0,0,4,0,0,0,2],
+            [2,0,0,0,0,0,2,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            [2,2,2,1,2,2,2,0,0,0,0,0,0,0,2,2,1,2,2,2],
+            [2,0,0,1,0,0,0,0,0,1,1,1,0,0,0,0,1,0,0,2],
+            [2,0,0,1,1,1,1,1,1,1,0,1,1,1,1,1,1,0,0,2],
+            [2,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,2],
+            [2,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,2],
+            [2,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,2],
+            [2,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,2],
+            [2,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,2],
+            [2,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,2],
+            [2,2,2,2,2,2,2,2,2,6,2,2,2,2,2,2,2,2,2,2],
+            [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2]
+        ];
+
+        let playerX = 9;
+        let playerY = 8;
+        let currentMap = villageMap;
+        let mapName = "始まりの村";
+
+
+        let messageBoxText = "";
+        let messageBoxActive = false;
+        let messageBoxCharIndex = 0;
+        let messageBoxTimer = 0;
+        let messageBoxFullText = "";
+
+
+        // --- Game State Management ---
+        const GameState = {
+            TITLE: 0,
+            NAME_INPUT: 1,
+            PROLOGUE: 2,
+            MAP: 3,
+            BATTLE: 4,
+            EVENT: 5,
+            GAMEOVER: 6,
+            MAP_MENU: 7
+        };
+
+
+        function showMessage(text) {
+            messageBoxFullText = text;
+            messageBoxText = "";
+            messageBoxCharIndex = 0;
+            messageBoxTimer = 0;
+            messageBoxActive = true;
+        }
+
+        let currentState = GameState.TITLE;
+
+        let globalState = {
+            playerName: "アレン",
+            playerLevel: 1,
+            playerHP: 20,
+            playerMaxHP: 20,
+            playerMP: 5,
+            playerMaxMP: 5,
+            playerAttack: 5,
+            playerDefense: 3,
+            playerExp: 0,
+            playerGold: 0,
+            inventory: [],
+            flags: {
+                armGlowed: false,
+                talkedToElder: false,
+                bossDefeated: false
+            }
+        };
+
+        // --- State Variables ---
+        let titleMenuIndex = 0; // 0: New Game, 1: Continue
+        let nameInputStr = "アレン";
+        const proText = [
+            "かつて、世界は光に満ちていた。",
+            "しかしある日、空は鈍色に染まり、",
+            "太陽の光は二度と地表に届かなくなった。",
+            "",
+            "人間、魔人、亜人。",
+            "種族を超えて人々は身を寄せ合い、",
+            "この薄暗い世界で生き抜いていた。",
+            "",
+            "そして今、一人の若者の左腕に宿る",
+            "奇妙な痣（あざ）が、",
+            "鈍く脈打ち始めようとしていた……。"
+        ];
+        let proLineIndex = 0;
+        let proCharIndex = 0;
+        let proTimer = 0;
+
+        function titleUpdate(dt) {
+            if (keys.justPressed.up) {
+                titleMenuIndex = 0;
+                playSound('cursor');
+            }
+            if (keys.justPressed.down) {
+                titleMenuIndex = 1;
+                playSound('cursor');
+            }
+            if (keys.justPressed.z || keys.justPressed.enter) {
+                playSound('confirm');
+                if (titleMenuIndex === 0) {
+                    currentState = GameState.NAME_INPUT;
+                } else {
+                    const loaded = loadGame();
+                    if (loaded) {
+                        globalState = loaded;
+                        currentState = GameState.MAP;
+                    } else {
+                        playSound('cancel');
+                    }
+                }
+            }
+        }
+
+        function titleDraw(ctx) {
+            ctx.fillStyle = '#111';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#fff';
+            ctx.font = '32px "MS Gothic", monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText('第1章: 鈍色の光と覚醒の予兆', canvas.width / 2, canvas.height / 3);
+
+            ctx.font = '24px "MS Gothic", monospace';
+            ctx.textAlign = 'left';
+            ctx.fillText('はじめから', canvas.width / 2 - 60, canvas.height / 2 + 50);
+            ctx.fillText('つづきから', canvas.width / 2 - 60, canvas.height / 2 + 90);
+
+            ctx.fillText('▶', canvas.width / 2 - 90, canvas.height / 2 + 50 + titleMenuIndex * 40);
+        }
+
+        function nameInputUpdate(dt) {
+            if (keys.justPressed.z || keys.justPressed.enter) {
+                playSound('confirm');
+                globalState.playerName = nameInputStr;
+                currentState = GameState.PROLOGUE;
+                proLineIndex = 0;
+                proCharIndex = 0;
+                proTimer = 0;
+            }
+        }
+
+        function nameInputDraw(ctx) {
+            ctx.fillStyle = '#fff';
+            ctx.font = '24px "MS Gothic", monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText('主人公の名前を入力してください', canvas.width / 2, canvas.height / 3);
+            ctx.fillText(nameInputStr, canvas.width / 2, canvas.height / 2);
+            ctx.font = '16px "MS Gothic", monospace';
+            ctx.fillText('（そのままZキーで決定）', canvas.width / 2, canvas.height / 2 + 50);
+        }
+
+        function prologueUpdate(dt) {
+            proTimer += dt;
+            if (proTimer > 50) { // Text speed
+                proTimer = 0;
+                if (proLineIndex < proText.length) {
+                    if (proCharIndex < proText[proLineIndex].length) {
+                        proCharIndex++;
+                    } else if (proLineIndex < proText.length - 1) {
+                        proLineIndex++;
+                        proCharIndex = 0;
+                    }
+                }
+            }
+
+            if (keys.justPressed.z || keys.justPressed.enter) {
+                if (proLineIndex >= proText.length - 1 && proCharIndex >= proText[proLineIndex].length) {
+                    playSound('confirm');
+                    currentState = GameState.MAP;
+                if(currentState === GameState.MAP) playBGM('map'); // Go to map
+                    playBGM('map');
+                } else {
+                    // Skip to end
+                    proLineIndex = proText.length - 1;
+                    proCharIndex = proText[proLineIndex].length;
+                }
+            }
+        }
+
+        function prologueDraw(ctx) {
+            ctx.fillStyle = '#fff';
+            ctx.font = '20px "MS Gothic", monospace';
+            ctx.textAlign = 'left';
+
+            for (let i = 0; i <= proLineIndex; i++) {
+                let textToDraw = proText[i];
+                if (i === proLineIndex) {
+                    textToDraw = textToDraw.substring(0, proCharIndex);
+                }
+                ctx.fillText(textToDraw, 50, 100 + i * 30);
+            }
+
+            if (proLineIndex >= proText.length - 1 && proCharIndex >= proText[proLineIndex].length) {
+                ctx.textAlign = 'center';
+                ctx.fillText('▼', canvas.width / 2, canvas.height - 50);
+            }
+        }
+
+        function mapUpdate(dt) {
+            if (messageBoxActive) {
+                if (messageBoxCharIndex < messageBoxFullText.length) {
+                    messageBoxTimer += dt;
+                    if (messageBoxTimer > 30) {
+                        messageBoxTimer = 0;
+                        messageBoxText += messageBoxFullText[messageBoxCharIndex];
+                        if (messageBoxFullText[messageBoxCharIndex] !== ' ' && messageBoxFullText[messageBoxCharIndex] !== '　' && messageBoxFullText[messageBoxCharIndex] !== '\n') {
+                            playSound('popopo');
+                        }
+                        messageBoxCharIndex++;
+                    }
+                    if (keys.justPressed.z || keys.justPressed.enter) {
+                        messageBoxText = messageBoxFullText;
+                        messageBoxCharIndex = messageBoxFullText.length;
+                    }
+                } else {
+                    if (keys.justPressed.z || keys.justPressed.enter) {
+                        messageBoxActive = false;
+                        playSound('confirm');
+                    }
+                }
+                return;
+            }
+
+
+            if (keys.justPressed.x) {
+                currentState = GameState.MAP_MENU;
+                mapMenuIndex = 0;
+                playSound('confirm');
+                return;
+            }
+
+            let nextX = playerX;
+            let nextY = playerY;
+
+
+
+            let isMoving = false;
+
+            // Movement cooldown timer (initialize globally if not present)
+            if (typeof window.moveTimer === 'undefined') window.moveTimer = 0;
+            if (window.moveTimer > 0) {
+                window.moveTimer -= dt;
+            } else {
+                if (keys.justPressed.up || keys.up) { nextY--; playerDir = 'up'; isMoving = true; window.moveTimer = 150; }
+                else if (keys.justPressed.down || keys.down) { nextY++; playerDir = 'down'; isMoving = true; window.moveTimer = 150; }
+                else if (keys.justPressed.left || keys.left) { nextX--; playerDir = 'left'; isMoving = true; window.moveTimer = 150; }
+                else if (keys.justPressed.right || keys.right) { nextX++; playerDir = 'right'; isMoving = true; window.moveTimer = 150; }
+            }
+
+            if (isMoving) {
+                playerAnimTimer += dt;
+                if (playerAnimTimer > 150) {
+                    playerAnimTimer = 0;
+                    playerAnimFrame = (playerAnimFrame + 1) % 4;
+                }
+            } else if (window.moveTimer <= 0) {
+                playerAnimFrame = 0;
+                playerAnimTimer = 0;
+            }
+
+
+
+            if (nextX !== playerX || nextY !== playerY) {
+                if (nextY >= 0 && nextY < currentMap.length && nextX >= 0 && nextX < currentMap[0].length) {
+                    const tile = currentMap[nextY][nextX];
+                    if (tile !== 2) { // 2 is wall
+                        playerX = nextX;
+                        playerY = nextY;
+
+                        // Check arm glowing event
+                        if (!globalState.flags.armGlowed && mapName === "始まりの村") {
+                            globalState.flags.armGlowed = true;
+                            showMessage("左腕のあざが鈍く光った……。");
+                        }
+
+                        // Random Encounter in forest (grass tiles)
+                        if (mapName === "魔物が棲む森" && currentMap[nextY][nextX] === 0) {
+                            if (Math.random() < 0.1) {
+                                startBattle(false);
+                            }
+                        }
+                    } else {
+                        // Interaction Check when bumping into things
+                        checkInteraction(nextX, nextY);
+                    }
+                }
+            }
+
+            // Check map transition triggers
+            if (mapName === "魔物が棲む森" && (keys.justPressed.z || keys.justPressed.enter) && currentMap[playerY][playerX] === 7) {
+                 startBattle(true); // Boss battle
+            }
+
+            // Check interaction in front when standing still and pressing Z
+            if (keys.justPressed.z || keys.justPressed.enter) {
+                executeInteraction(true);
+            }
+        }
+
+
+        function mapMenuUpdate(dt) {
+            if (keys.justPressed.up) {
+                mapMenuIndex = (mapMenuIndex - 1 + mapCommands.length) % mapCommands.length;
+                playSound('cursor');
+            }
+            if (keys.justPressed.down) {
+                mapMenuIndex = (mapMenuIndex + 1) % mapCommands.length;
+                playSound('cursor');
+            }
+            if (keys.justPressed.x) {
+                currentState = GameState.MAP;
+                if(currentState === GameState.MAP) playBGM('map');
+                playSound('cancel');
+            }
+            if (keys.justPressed.z || keys.justPressed.enter) {
+                playSound('confirm');
+                currentState = GameState.MAP;
+                if(currentState === GameState.MAP) playBGM('map');
+                if (mapMenuIndex === 0) { // はなす
+                    executeInteraction(true);
+                } else if (mapMenuIndex === 4) { // しらべる
+                    executeInteraction(false);
+                } else if (mapMenuIndex === 2) { // つよさ
+                    showMessage(globalState.playerName + "のつよさ\nLV: " + globalState.playerLevel + " HP: " + globalState.playerHP + "/" + globalState.playerMaxHP + "\nMP: " + globalState.playerMP + "/" + globalState.playerMaxMP + " 攻: " + globalState.playerAttack + " 防: " + globalState.playerDefense);
+                } else {
+                    showMessage("今は使えない。");
+                }
+            }
+        }
+
+        function executeInteraction(isTalk) {
+            let tx = playerX;
+            let ty = playerY;
+            if (playerDir === 'up') ty--;
+            else if (playerDir === 'down') ty++;
+            else if (playerDir === 'left') tx--;
+            else if (playerDir === 'right') tx++;
+
+            // Check adjacent tile
+            if (ty >= 0 && ty < currentMap.length && tx >= 0 && tx < currentMap[0].length) {
+                let tile = currentMap[ty][tx];
+                // For simplicity, just call checkInteraction on the tile in front
+                let prevActive = messageBoxActive;
+                checkInteraction(tx, ty);
+                if (!messageBoxActive && !prevActive) {
+                    if (isTalk) showMessage("そこには誰もいない。");
+                    else showMessage("なにもみつからなかった。");
+                }
+            } else {
+                 if (isTalk) showMessage("そこには誰もいない。");
+                 else showMessage("なにもみつからなかった。");
+            }
+        }
+
+        function checkInteraction(tx, ty) {
+            if (ty < 0 || ty >= currentMap.length || tx < 0 || tx >= currentMap[0].length) return;
+            const tile = currentMap[ty][tx];
+
+            if (tile === 7) {
+                // Boss interaction handled by step-on trigger for simplicity
+            } else if (tile === 3) { // Inn
+                globalState.playerHP = globalState.playerMaxHP;
+                globalState.playerMP = globalState.playerMaxMP;
+                showMessage("宿屋に泊まり、HPとMPが全回復した！");
+                playSound('magic');
+            } else if (tile === 4) { // Shop
+                showMessage("道具屋：今は品切れ中だ。すまないね。");
+                playSound('confirm');
+            } else if (tile === 5) { // Elder
+                globalState.flags.talkedToElder = true;
+                showMessage("村長：森の野生魔物が狂暴化しておる。どうか鎮めてきてくれ！");
+                playSound('confirm');
+            } else if (tile === 6) { // Exit
+                if (globalState.flags.talkedToElder) {
+                    // transition to forest
+                    currentMap = forestMap; // Needs implementation
+                    mapName = "魔物が棲む森";
+                    playerX = 1;
+                    playerY = 1;
+                    showMessage("森に入った……。");
+                } else {
+                    showMessage("村長に話を聞いてから出発しよう。");
+                }
+            }
+        }
+
+
+        const forestMap = [
+            [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+            [2,1,0,0,0,2,2,0,0,0,0,0,0,0,0,0,0,0,7,2],
+            [2,0,2,2,0,2,2,0,2,2,2,2,0,2,2,2,2,0,0,2],
+            [2,0,2,2,0,0,0,0,2,2,2,2,0,2,2,2,2,0,0,2],
+            [2,0,0,0,0,2,2,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            [2,2,2,2,0,2,2,2,2,2,2,2,0,2,2,2,2,2,2,2],
+            [2,2,2,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            [2,0,0,0,0,2,2,2,2,2,2,2,0,2,2,2,2,2,0,2],
+            [2,0,2,2,2,2,2,2,2,2,2,2,0,2,2,2,2,2,0,2],
+            [2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+            [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+            [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+            [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+            [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2]
+        ];
+
+        // --- Battle System ---
+
+        let particles = [];
+
+        function updateParticles(dt) {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.life -= dt;
+                p.x += p.vx * dt * 0.05;
+                p.y += p.vy * dt * 0.05;
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+
+        function drawParticles(ctx) {
+            for (let p of particles) {
+                ctx.fillStyle = `rgba(150, 200, 255, ${p.life / p.maxLife})`;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        let battleState = {
+            enemyHP: 10,
+            enemyMaxHP: 10,
+            enemyName: "スライム",
+            enemyAttack: 2,
+            enemyExp: 5,
+            message: "",
+            menuIndex: 0,
+            phase: 'command', // command, player_action, enemy_action, end
+            isBoss: false,
+            slashTimer: 0,
+            slashTimer: 0
+        };
+
+        const enemies = [
+            { name: "狂暴ゴブリン", hp: 15, atk: 4, exp: 10 },
+            { name: "森ウルフ", hp: 12, atk: 5, exp: 8 },
+            { name: "変異スライム", hp: 20, atk: 3, exp: 12 }
+        ];
+
+        function startBattle(isBoss = false) {
+            currentState = GameState.BATTLE;
+            battleState.isBoss = isBoss;
+            battleState.phase = 'command';
+            battleState.menuIndex = 0;
+
+            if (isBoss) {
+                battleState.enemyName = "森のヌシ（狂暴化）";
+                battleState.enemyMaxHP = 60;
+                battleState.enemyHP = 60;
+                battleState.enemyAttack = 8;
+                battleState.enemyExp = 50;
+            } else {
+                let e = enemies[Math.floor(Math.random() * enemies.length)];
+                battleState.enemyName = e.name;
+                battleState.enemyMaxHP = e.hp;
+                battleState.enemyHP = e.hp;
+                battleState.enemyAttack = e.atk;
+                battleState.enemyExp = e.exp;
+            }
+            battleState.message = `${battleState.enemyName} があらわれた！`;
+            playSound('hit'); // encounter sound
+            playBGM('battle');
+        }
+
+        function battleUpdate(dt) {
+            if (battleState.slashTimer > 0) battleState.slashTimer -= dt;
+            updateParticles(dt);
+            if (battleState.phase === 'command') {
+                if (keys.justPressed.up) {
+                    battleState.menuIndex = (battleState.menuIndex - 1 + 5) % 5;
+                    playSound('cursor');
+                }
+                if (keys.justPressed.down) {
+                    battleState.menuIndex = (battleState.menuIndex + 1) % 5;
+                    playSound('cursor');
+                }
+                if (keys.justPressed.z || keys.justPressed.enter) {
+                    playSound('confirm');
+                    battleState.phase = 'player_action';
+                    executePlayerAction();
+                }
+            } else if (battleState.phase === 'player_action' || battleState.phase === 'enemy_action' || battleState.phase === 'end' || battleState.phase === 'levelup_wait' || battleState.phase === 'escape_wait') {
+                if (keys.justPressed.z || keys.justPressed.enter) {
+                    if (battleState.phase === 'player_action') {
+                        if (battleState.enemyHP <= 0) {
+                            battleState.phase = 'end';
+                            battleState.message = `${battleState.enemyName} をたおした！\n${battleState.enemyExp}の経験値を獲得！`;
+                            playSound('fanfare');
+                        } else {
+                            battleState.phase = 'enemy_action';
+                            executeEnemyAction();
+                        }
+                    } else if (battleState.phase === 'enemy_action') {
+                        if (globalState.playerHP <= 0) {
+                            currentState = GameState.GAMEOVER;
+
+                        } else {
+                            battleState.phase = 'command';
+                            battleState.message = "どうする？";
+                        }
+                    } else if (battleState.phase === 'end') {
+                        // Level up check
+                        globalState.playerExp += battleState.enemyExp;
+                        if (globalState.playerExp >= globalState.playerLevel * 20) {
+                            globalState.playerLevel++;
+                            globalState.playerMaxHP += 10;
+                            globalState.playerHP = globalState.playerMaxHP;
+                            globalState.playerMaxMP += 5;
+                            globalState.playerMP = globalState.playerMaxMP;
+                            globalState.playerAttack += 3;
+                            globalState.playerDefense += 2;
+                            globalState.playerExp = 0;
+
+                            battleState.message = `レベルが ${globalState.playerLevel} に上がった！\n（急激な成長を感じる…）`;
+                            playSound('magic');
+                            battleState.phase = 'levelup_wait';
+                        } else {
+                            endBattle();
+                        }
+                    } else if (battleState.phase === 'levelup_wait' || battleState.phase === 'escape_wait') {
+                        endBattle();
+                    }
+                }
+            }
+        }
+
+        function executePlayerAction() {
+            let dmg = 0;
+            switch(battleState.menuIndex) {
+                case 0: // こうげき
+                    dmg = Math.max(1, globalState.playerAttack - Math.floor(Math.random() * 2));
+                    battleState.enemyHP -= dmg;
+                    battleState.message = `${globalState.playerName}の攻撃！\n${dmg}のダメージ！`;
+                    playSound('hit');
+                    battleState.slashTimer = 300;
+                    break;
+                case 1: // あざのスキル
+                    if (globalState.playerMP >= 3) {
+                        globalState.playerMP -= 3;
+                        dmg = Math.max(5, globalState.playerAttack * 2);
+                        battleState.enemyHP -= dmg;
+
+                        battleState.message = `あざが光る！強力な一撃！\n${dmg}のダメージ！`;
+                        playSound('magic');
+                        // Spawn particles
+                        for(let i=0; i<30; i++) {
+                            particles.push({
+                                x: canvas.width/2,
+                                y: canvas.height/3,
+                                vx: (Math.random() - 0.5) * 10,
+                                vy: (Math.random() - 0.5) * 10,
+                                life: 500 + Math.random() * 500,
+                                maxLife: 1000,
+                                size: 2 + Math.random() * 3
+                            });
+                        }
+
+                    } else {
+                        battleState.message = `MPが足りない！`;
+                    }
+                    break;
+                case 2: // アイテム
+                    battleState.message = `アイテムを持っていない！`;
+                    break;
+                case 3: // ぼうぎょ
+                    battleState.message = `${globalState.playerName}は身を固めている。`;
+                    break;
+                case 4: // にげる
+                    if (battleState.isBoss) {
+                        battleState.message = `逃げられない！`;
+                    } else {
+                        battleState.message = `うまく逃げ切れた！`;
+                        battleState.phase = 'escape_wait';
+                    }
+                    break;
+            }
+        }
+
+        function executeEnemyAction() {
+            let dmg = Math.max(1, battleState.enemyAttack - (battleState.menuIndex === 3 ? globalState.playerDefense * 2 : globalState.playerDefense));
+            globalState.playerHP -= dmg;
+            battleState.message = `${battleState.enemyName}の攻撃！\n${dmg}のダメージを受けた！`;
+            playSound('hit');
+        }
+
+        function endBattle() {
+            if (battleState.isBoss) {
+                globalState.flags.bossDefeated = true;
+                currentState = GameState.EVENT; // transition to post-boss event
+
+                proLineIndex = 0;
+                proCharIndex = 0;
+                proTimer = 0;
+                // clear flags to reuse prologue text logic
+                currentEventText = bossDefeatedText;
+            } else {
+                currentState = GameState.MAP;
+                if(currentState === GameState.MAP) playBGM('map');
+            }
+        }
+
+
+        function mapMenuDraw(ctx) {
+            mapDraw(ctx); // Draw map in background
+
+            if (!messageBoxActive) {
+                drawWindow(ctx, 10, 50, 160, 160);
+                ctx.fillStyle = '#fff';
+                ctx.font = '20px "MS Gothic", monospace';
+                ctx.textAlign = 'left';
+                for (let i = 0; i < mapCommands.length; i++) {
+                    ctx.fillText(mapCommands[i], 40, 80 + i * 25);
+                }
+                ctx.fillText('▶', 20, 80 + mapMenuIndex * 25);
+            }
+        }
+
+
+        function battleDraw(ctx) {
+            ctx.drawImage(imageAssets.battle_bg, 0, 0, canvas.width, canvas.height);
+
+            const enemySize = 128;
+            const enemyX = canvas.width/2 - enemySize/2;
+            const enemyY = canvas.height/3 - enemySize/2;
+            ctx.drawImage(imageAssets.monster, enemyX, enemyY, enemySize, enemySize);
+
+            // Slash effect
+            if (battleState.slashTimer > 0) {
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.moveTo(enemyX + 20, enemyY + 20);
+                ctx.lineTo(enemyX + enemySize - 20, enemyY + enemySize - 20);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(enemyX + enemySize - 20, enemyY + 20);
+                ctx.lineTo(enemyX + 20, enemyY + enemySize - 20);
+                ctx.stroke();
+                ctx.lineWidth = 1;
+            }
+
+            ctx.fillStyle = '#fff';
+            ctx.font = '24px "MS Gothic", monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText(battleState.enemyName, canvas.width/2, canvas.height/3 - 80);
+
+            // UI Player stats
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            ctx.fillRect(0, 0, canvas.width, 40);
+            ctx.fillStyle = '#fff';
+            ctx.font = '16px monospace';
+            ctx.textAlign = 'left';
+            ctx.fillText(`LV: ${globalState.playerLevel} HP: ${globalState.playerHP}/${globalState.playerMaxHP} MP: ${globalState.playerMP}/${globalState.playerMaxMP}`, 10, 25);
+
+            drawParticles(ctx);
+
+            // Message Box
+            drawWindow(ctx, 10, canvas.height - 150, canvas.width - 200, 140);
+
+            ctx.fillStyle = '#fff';
+            ctx.font = '20px "MS Gothic", monospace';
+            ctx.textAlign = 'left';
+            const lines = battleState.message.split('\n');
+            for(let i=0; i<lines.length; i++) {
+                ctx.fillText(lines[i], 20, canvas.height - 120 + i*30);
+            }
+
+            // Command Menu
+            if (battleState.phase === 'command') {
+                drawWindow(ctx, canvas.width - 180, canvas.height - 150, 170, 140);
+
+                const cmds = ["こうげき", "あざのスキル", "アイテム", "ぼうぎょ", "にげる"];
+                for (let i = 0; i < cmds.length; i++) {
+                    ctx.fillText(cmds[i], canvas.width - 150, canvas.height - 125 + i * 25);
+                }
+                ctx.fillText('▶', canvas.width - 170, canvas.height - 125 + battleState.menuIndex * 25);
+            }
+        }
+
+
+        const bossDefeatedText = [
+            "……！",
+            "魔物を倒した瞬間、",
+            "左腕のあざが激しく脈動し始めた！",
+            "",
+            "『力が……流れ込んでくる……』",
+            "",
+            "（どこかから声が聞こえたような気がした）",
+            "",
+            "数日後……",
+            "村長「おお、森の魔物を鎮めてくれたか！",
+            "これで村も安泰じゃ。",
+            "そういえば、旅の商人から聞いたのだが……」",
+            "",
+            "「隣国の姫様が行方不明になったらしい。",
+            "しかも、お前さんのように腕が光る旅人が、",
+            "西の地へ向かったという噂があるそうだ」",
+            "",
+            "……第1章 鈍色の光と覚醒の予兆 完"
+        ];
+
+
+        let mapMenuIndex = 0;
+        const mapCommands = ["はなす", "じゅもん/とくぎ", "つよさ", "どうぐ", "しらべる"];
+
+        let currentEventText = bossDefeatedText;
+
+        function eventUpdate(dt) {
+            proTimer += dt;
+            if (proTimer > 50) {
+                proTimer = 0;
+                if (proLineIndex < currentEventText.length) {
+                    if (proCharIndex < currentEventText[proLineIndex].length) {
+                        proCharIndex++;
+                    } else if (proLineIndex < currentEventText.length - 1) {
+                        proLineIndex++;
+                        proCharIndex = 0;
+                    }
+                }
+            }
+
+            if (keys.justPressed.z || keys.justPressed.enter) {
+                if (proLineIndex >= currentEventText.length - 1 && proCharIndex >= currentEventText[proLineIndex].length) {
+                    playSound('confirm');
+                    // Save and Go back to title
+                    saveGame(globalState);
+                    currentState = GameState.TITLE;
+                } else {
+                    proLineIndex = currentEventText.length - 1;
+                    proCharIndex = currentEventText[proLineIndex].length;
+                }
+            }
+        }
+
+        function eventDraw(ctx) {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = '#fff';
+            ctx.font = '20px "MS Gothic", monospace';
+            ctx.textAlign = 'left';
+
+            // Draw last few lines if text is long
+            let startLine = Math.max(0, proLineIndex - 12);
+            for (let i = startLine; i <= proLineIndex; i++) {
+                let textToDraw = currentEventText[i];
+                if (i === proLineIndex) {
+                    textToDraw = textToDraw.substring(0, proCharIndex);
+                }
+                ctx.fillText(textToDraw, 50, 100 + (i - startLine) * 25);
+            }
+
+            if (proLineIndex >= currentEventText.length - 1 && proCharIndex >= currentEventText[proLineIndex].length) {
+                ctx.textAlign = 'center';
+                ctx.fillText('▼ セーブしてタイトルへ', canvas.width / 2, canvas.height - 50);
+            }
+        }
+
+
+        let playerDir = 'down';
+        let playerAnimFrame = 0;
+        let playerAnimTimer = 0;
+
+
+
+
+        function mapDraw(ctx) {
+            // Draw map
+            for (let y = 0; y < currentMap.length; y++) {
+                for (let x = 0; x < currentMap[y].length; x++) {
+                    let tile = currentMap[y][x];
+                    let pX = x * TILE_SIZE;
+                    let pY = y * TILE_SIZE;
+
+                    // Base tiles
+                    if (tile === 0 || tile === 2 || tile >= 3) {
+                        ctx.drawImage(imageAssets.grass, pX, pY, TILE_SIZE, TILE_SIZE);
+                    } else if (tile === 1) {
+                        ctx.drawImage(imageAssets.path, pX, pY, TILE_SIZE, TILE_SIZE);
+                    }
+
+                    // Overlays
+                    if (tile === 2) {
+                        ctx.drawImage(imageAssets.tree, pX, pY, TILE_SIZE, TILE_SIZE);
+                    } else if (tile === 3) { // Inn
+                        ctx.drawImage(imageAssets.brick, pX, pY, TILE_SIZE, TILE_SIZE);
+                        ctx.fillStyle = 'rgba(0,0,255,0.5)'; ctx.fillRect(pX, pY, TILE_SIZE, TILE_SIZE);
+                        ctx.fillStyle = '#fff'; ctx.fillText('宿', pX + TILE_SIZE/2, pY + TILE_SIZE/2 + 6);
+                    } else if (tile === 4) { // Shop
+                        ctx.drawImage(imageAssets.brick, pX, pY, TILE_SIZE, TILE_SIZE);
+                        ctx.fillStyle = 'rgba(255,0,0,0.5)'; ctx.fillRect(pX, pY, TILE_SIZE, TILE_SIZE);
+                        ctx.fillStyle = '#fff'; ctx.fillText('店', pX + TILE_SIZE/2, pY + TILE_SIZE/2 + 6);
+                    } else if (tile === 5) { // Elder (House)
+                        ctx.drawImage(imageAssets.brick, pX, pY, TILE_SIZE, TILE_SIZE);
+                        ctx.fillStyle = 'rgba(200,150,0,0.5)'; ctx.fillRect(pX, pY, TILE_SIZE, TILE_SIZE);
+                        ctx.fillStyle = '#fff'; ctx.fillText('長', pX + TILE_SIZE/2, pY + TILE_SIZE/2 + 6);
+                    } else if (tile === 6) { // Exit
+                        ctx.drawImage(imageAssets.path, pX, pY, TILE_SIZE, TILE_SIZE);
+                        ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(pX, pY, TILE_SIZE, TILE_SIZE);
+                        ctx.fillStyle = '#fff'; ctx.fillText('出', pX + TILE_SIZE/2, pY + TILE_SIZE/2 + 6);
+                    } else if (tile === 7) { // Boss area
+                        ctx.drawImage(imageAssets.path, pX, pY, TILE_SIZE, TILE_SIZE);
+                        ctx.fillStyle = 'rgba(255,0,0,0.3)'; ctx.fillRect(pX, pY, TILE_SIZE, TILE_SIZE);
+                    }
+                }
+            }
+
+            // Draw player
+            let dirIndex = 0;
+            if (playerDir === 'down') dirIndex = 0;
+            if (playerDir === 'left') dirIndex = 1;
+            if (playerDir === 'right') dirIndex = 2;
+            if (playerDir === 'up') dirIndex = 3;
+
+            let animSequence = [0, 1, 0, 2];
+            let frameX = animSequence[playerAnimFrame] * 32;
+            let frameY = dirIndex * 32;
+
+            ctx.drawImage(imageAssets.player, frameX, frameY, 32, 32, playerX * TILE_SIZE, playerY * TILE_SIZE - 8, 32, 32);
+
+            // UI
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            ctx.fillRect(0, 0, canvas.width, 40);
+            ctx.fillStyle = '#fff';
+            ctx.font = '16px monospace';
+            ctx.textAlign = 'left';
+            ctx.fillText(`${mapName} | LV: ${globalState.playerLevel} HP: ${globalState.playerHP}/${globalState.playerMaxHP} MP: ${globalState.playerMP}/${globalState.playerMaxMP}`, 10, 25);
+
+            // Message Box
+            if (messageBoxActive) {
+                drawWindow(ctx, 10, canvas.height - 100, canvas.width - 20, 90);
+
+                ctx.fillStyle = '#fff';
+                ctx.font = '20px "MS Gothic", monospace';
+                ctx.textAlign = 'left';
+                const lines = messageBoxText.split('\n');
+                for(let i=0; i<lines.length; i++) {
+                    ctx.fillText(lines[i], 20, canvas.height - 60 + i*25);
+                }
+                ctx.textAlign = 'right';
+                ctx.fillText('▼', canvas.width - 20, canvas.height - 20);
+            }
+        }
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = false;
+
+        let lastTime = 0;
+
+        function update(dt) {
+            // Need audio init on interaction
+            if (keys.justPressed.z || keys.justPressed.enter) {
+                initAudio();
+            }
+
+            switch (currentState) {
+                case GameState.TITLE:
+                    titleUpdate(dt);
+                    break;
+                case GameState.NAME_INPUT:
+                    nameInputUpdate(dt);
+                    break;
+                case GameState.PROLOGUE:
+                    prologueUpdate(dt);
+                    break;
+                case GameState.MAP:
+                    mapUpdate(dt);
+                    break;
+                case GameState.MAP_MENU:
+                    mapMenuUpdate(dt);
+                    break;
+                case GameState.BATTLE:
+                    battleUpdate(dt);
+                    break;
+                case GameState.EVENT:
+                    eventUpdate(dt);
+                    break;
+                case GameState.GAMEOVER:
+                    if (keys.justPressed.z || keys.justPressed.enter) {
+                        currentState = GameState.TITLE;
+                    }
+                    break;
+                // other states...
+            }
+
+            clearJustPressed();
+        }
+
+        function draw() {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            switch (currentState) {
+                case GameState.TITLE:
+                    titleDraw(ctx);
+                    break;
+                case GameState.NAME_INPUT:
+                    nameInputDraw(ctx);
+                    break;
+                case GameState.PROLOGUE:
+                    prologueDraw(ctx);
+                    break;
+                case GameState.MAP:
+                    mapDraw(ctx);
+                    break;
+                case GameState.MAP_MENU:
+                    mapMenuDraw(ctx);
+                    break;
+                case GameState.BATTLE:
+                    battleDraw(ctx);
+                    break;
+                case GameState.EVENT:
+                    eventDraw(ctx);
+                    break;
+                case GameState.GAMEOVER:
+                    ctx.fillStyle = '#f00';
+                    ctx.font = '40px monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2);
+                    break;
+            }
+        }
+
+        function gameLoop(timestamp) {
+            const dt = timestamp - lastTime;
+            lastTime = timestamp;
+
+            update(dt);
+            draw();
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        requestAnimationFrame((timestamp) => {
+            lastTime = timestamp;
+            gameLoop(timestamp);
+        });
+    </script>
+</body>
+</html>
